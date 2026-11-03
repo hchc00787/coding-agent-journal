@@ -1,0 +1,17 @@
+{
+  "name": "coding-agent-journal",
+  "version": "0.1.0",
+  "description": "Turn AI coding-agent session logs into a durable, local-first work journal.",
+  "type": "module",
+  "bin": {
+    "agent-journal": "bin/agent-journal.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "private": false
+}

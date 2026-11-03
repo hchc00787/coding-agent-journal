@@ -1,0 +1,2 @@
+{"sessionId":"syn-002","cwd":"/home/testuser/projects/demo-shop","timestamp":"2026-11-02T09:00:00Z","type":"user","message":{"role":"user","content":[{"type":"text","text":"Add rate limiting to the API"}]}}
+{"sessionId":"syn-002","cwd":"/home/testuser/projects/demo-shop","timestamp":"2026-11-02T09:10:00Z","type":"assistant","message":{"role":"assistant","model":"claude-opus-4-1","usage":{"input_tokens":20000,"output_tokens":5000},"content":[{"type":"text","text":"Done. Rate limiting is in place."}]}}
