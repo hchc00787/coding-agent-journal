@@ -70,6 +70,7 @@ export function toJournalEntry(session, { fullText = false } = {}) {
     filesModified: [...session.filesModified].map(f => redactPaths(f, session.cwd)),
     filesRead: [...session.filesRead].map(f => redactPaths(f, session.cwd)),
     toolCalls: session.toolCalls,
+    spill: session.spill || { read: 0, missing: 0, truncated: 0 },
     outcome,
     skippedMalformed: session.skippedMalformed, skippedDuplicate: session.skippedDuplicate,
   };

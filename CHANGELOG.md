@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Reads standard Claude Code text spill files (`tool-results/<tool-use-id>.txt`) for outcome evidence, labels missing or truncated spill output, and refuses arbitrary paths or symlinked spill locations.
+
 ## 0.1.0 - 2026-11-03
 
 First public release (experimental).
