@@ -1,5 +1,5 @@
 import { COST_DISCLAIMER } from './pricing.js';
-import { outcomeLabel, costLabel, COVERAGE_LIMITS, GENERATED_MARK } from './report-md.js';
+import { outcomeLabel, costLabel, spillLabel, COVERAGE_LIMITS, GENERATED_MARK } from './report-md.js';
 
 function esc(s) { return String(s).replace(/[&<>"'`]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' }[c])); }
 
@@ -14,7 +14,7 @@ export function renderHtml(journal) {
       <article class="entry">
         <h3>${esc(e.project)} <small>${esc(e.models.join(', ') || 'unknown model')} · ${esc(costLabel(e.cost))}</small></h3>
         <p class="task">${esc(e.task)}</p>
-        <p class="meta">in ${Number(e.tokens.inputTokens)} / out ${Number(e.tokens.outputTokens)} / cache read ${Number(e.tokens.cacheReadTokens)} / cache write ${Number(e.tokens.cacheWriteTokens)} tokens${e.tokens.incomplete ? ' (partial: some usage missing or invalid)' : ''} · ${Number(e.filesModified.length)} modified / ${Number(e.filesRead.length)} read files · <b class="badge ${e.outcome.status==='log-reported-failure'?'fail':e.outcome.status==='log-reported-pass'?'pass':e.outcome.basis}">${esc(outcomeLabel(e.outcome.status))}</b> - ${esc(e.outcome.detail)}</p>
+        <p class="meta">in ${Number(e.tokens.inputTokens)} / out ${Number(e.tokens.outputTokens)} / cache read ${Number(e.tokens.cacheReadTokens)} / cache write ${Number(e.tokens.cacheWriteTokens)} tokens${e.tokens.incomplete ? ' (partial: some usage missing or invalid)' : ''} · ${Number(e.filesModified.length)} modified / ${Number(e.filesRead.length)} read files${spillLabel(e.spill) ? ` · spills: ${esc(spillLabel(e.spill))}` : ''} · <b class="badge ${e.outcome.status==='log-reported-failure'?'fail':e.outcome.status==='log-reported-pass'?'pass':e.outcome.basis}">${esc(outcomeLabel(e.outcome.status))}</b> - ${esc(e.outcome.detail)}</p>
       </article>`).join('')}
     </section>`).join('');
   return `<!doctype html>
