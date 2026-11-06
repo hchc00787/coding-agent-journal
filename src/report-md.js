@@ -10,7 +10,7 @@ const OUTCOME_LABEL = {
 export const GENERATED_MARK = '<!-- generated-by: coding-agent-journal -->';
 
 export const COVERAGE_LIMITS =
-  'Coverage limits: parsed from third-party documented Claude Code JSONL format, untested against real logs. Externalized tool results, Codex logs and file-history snapshots are not read; sidechain events inside a file are included in the session for that file, while separate subagent files appear as separate entries. Missing usage fields are treated as unknown, not zero.';
+  'Coverage limits: parsed from third-party documented Claude Code JSONL format, untested against real logs. Standard text tool-result spill files are read when found, with missing or truncated spills labeled; structured JSON spills, Codex logs and file-history snapshots are not read. Sidechain events inside a file are included in the session for that file, while separate subagent files appear as separate entries. Missing usage fields are treated as unknown, not zero.';
 
 export function outcomeLabel(status) { return OUTCOME_LABEL[status] || status; }
 
@@ -42,6 +42,16 @@ const EVIDENCE_CAVEAT =
   '"Log-reported" means the signal appeared in tool-output text recorded in the session log. ' +
   'That text is self-reported by whatever ran in the session; this tool did not rerun or verify it.';
 
+
+export function spillLabel(spill) {
+  if (!spill || (!spill.read && !spill.missing && !spill.truncated)) return null;
+  const parts = [];
+  if (spill.read) parts.push(`${spill.read} read`);
+  if (spill.truncated) parts.push(`${spill.truncated} truncated (head and tail kept)`);
+  if (spill.missing) parts.push(`${spill.missing} missing (inline preview used)`);
+  return parts.join('; ');
+}
+
 export function renderMarkdown(journal) {
   const lines = ['# Agent work journal', '', GENERATED_MARK, '',
     `_Generated ${journal.generatedAt}. Local-only; review before sharing._`, '',
@@ -56,6 +66,8 @@ export function renderMarkdown(journal) {
       if (e.filesModified.length) lines.push(`- Files modified (Edit/Write): ${md(e.filesModified.join(', '))}`);
       if (e.filesRead.length) lines.push(`- Files read: ${md(e.filesRead.join(', '))}`);
       lines.push(`- Outcome: ${OUTCOME_LABEL[e.outcome.status]} - ${md(e.outcome.detail)}`);
+      const spill = spillLabel(e.spill);
+      if (spill) lines.push(`- Tool output spills: ${md(spill)}`);
       lines.push('');
     }
   }
