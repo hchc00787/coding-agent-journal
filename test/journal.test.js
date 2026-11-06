@@ -190,7 +190,7 @@ test('standard spilled tool-result sidecar supplies outcome evidence without fol
   const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
   assert.ok(s.evidence.some(e => e.kind === 'test-pass' && e.detail.includes('24 passing')));
   assert.ok(!s.evidence.some(e => e.detail.includes('999 passing')), 'arbitrary persistedOutputPath must not be followed');
-  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 0 });
+  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 0, unsupported: 0 });
   const [e] = buildJournal([s], {}).days[0].entries;
   assert.equal(e.outcome.status, 'log-reported-pass');
   assert.match(renderMarkdown(buildJournal([s], {})), /Tool output spills: 1 read/);
@@ -203,10 +203,28 @@ test('missing spill is labeled and falls back to inline preview', () => {
     JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_missing', content: '<persisted-output>Output too large. Full output saved to: /ignored/tool-results/toolu_missing.txt\n\nPreview: 7 tests passing</persisted-output>' }] } }),
   ].join('\n') + '\n');
   const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
-  assert.deepEqual(s.spill, { read: 0, missing: 1, truncated: 0 });
+  assert.deepEqual(s.spill, { read: 0, missing: 1, truncated: 0, unsupported: 0 });
   assert.ok(s.evidence.some(e => e.detail.includes('7 passing')));
   const md = renderMarkdown(buildJournal([s], {}));
   assert.ok(md.includes('Tool output spills: 1 missing \\(inline preview used\\)'));
+});
+
+test('structured JSON spill is labeled unsupported, not missing', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-spill-json-'));
+  const sessionId = 'json-spill';
+  const spillDir = path.join(dir, sessionId, 'tool-results');
+  fs.mkdirSync(spillDir, { recursive: true });
+  fs.writeFileSync(path.join(spillDir, 'toolu_json.json'), JSON.stringify({ stdout: '999 tests passing' }));
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), [
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_json', content: '<persisted-output>Output too large. Full output saved to: ignored</persisted-output>' }] } }),
+  ].join('\n') + '\n');
+  const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
+  assert.deepEqual(s.spill, { read: 0, missing: 0, truncated: 0, unsupported: 1 });
+  assert.ok(!s.evidence.some(e => e.detail.includes('999 passing')), 'unsupported JSON spill content must not be read');
+  const journal = buildJournal([s], {});
+  const md = renderMarkdown(journal);
+  assert.ok(md.includes('1 not read \\(unsupported structured spill; inline text used\\)'));
+  assert.ok(renderHtml(journal).includes('spills: 1 not read (unsupported structured spill; inline text used)'));
 });
 
 test('capped spill keeps head and tail, and last test summary wins', () => {
@@ -224,7 +242,7 @@ test('capped spill keeps head and tail, and last test summary wins', () => {
     JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_big', content: '<persisted-output>Output too large. Full output saved to: ignored\n\nPreview: 5 tests passing</persisted-output>' }] } }),
   ].join('\n') + '\n');
   const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
-  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 1 });
+  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 1, unsupported: 0 });
   assert.ok(s.evidence.some(e => e.detail.includes('24 passing')));
   assert.ok(!s.evidence.some(e => e.detail.includes('5 passing')), 'first suite summary must not beat the final summary');
   const md = renderMarkdown(buildJournal([s], {}));
@@ -270,7 +288,7 @@ test('subagent transcript reads the parent session shared spill directory', () =
     JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sub', content: '<persisted-output>Output too large. Full output saved to: ignored\n\nPreview: partial</persisted-output>' }] } }),
   ].join('\n') + '\n');
   const s = parseSessionFile(agentFile);
-  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 0 });
+  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 0, unsupported: 0 });
   assert.ok(s.evidence.some(e => e.detail.includes('33 passing')));
 });
 
