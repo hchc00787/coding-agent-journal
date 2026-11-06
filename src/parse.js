@@ -2,8 +2,9 @@
 // Schema coverage is best-effort, based on third-party documented formats
 // (claude-dev.tools JSONL format doc; markmdev/claude-skills transcript-schema.md).
 // Coverage limits: sidechain events inside a file are included; separate subagent files are separate sessions;
-// file-history-snapshot / progress / queue-operation lines are ignored;
-// externalized tool-results (tool-results/toolu_*.txt files) are NOT read.
+// file-history-snapshot / progress / queue-operation lines are ignored.
+// Standard sibling-session tool-results/<tool_use_id>.txt spill files are read for outcome evidence.
+// Missing/truncated spills are labeled; structured .json spill files and arbitrary persistedOutputPath values are not followed.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -37,6 +38,7 @@ export function parseSessionFile(file) {
     firstUserText: null, lastAssistantText: null,
     filesModified: new Set(), filesRead: new Set(), toolCalls: 0, bashCommands: 0,
     evidence: [], // signals observed in tool output text, never agent claims
+    spill: { read: 0, missing: 0, truncated: 0 },
     skippedMalformed, skippedDuplicate,
   };
 
@@ -76,7 +78,20 @@ export function parseSessionFile(file) {
           if (typeof block.content === 'string') parts.push(block.content);
           else if (Array.isArray(block.content))
             for (const c of block.content) if (c && c.type === 'text' && typeof c.text === 'string') parts.push(c.text);
-          collectEvidence(parts.join('\n'), session.evidence);
+          const inline = parts.join('\n');
+          // Claude Code can spill large tool output beside the session. Follow only
+          // filenames derived from the on-disk session layout and tool_use_id; never
+          // follow an arbitrary path embedded in the log. Label expected-but-missing
+          // spills so preview-only coverage is visible instead of silently degraded.
+          const spilled = readSpilledToolResult(file, block.tool_use_id);
+          if (spilled) {
+            session.spill.read++;
+            if (spilled.truncated) session.spill.truncated++;
+            collectEvidence(spilled.text, session.evidence);
+          } else {
+            if (expectsSpilledToolResult(inline, e.toolUseResult)) session.spill.missing++;
+            collectEvidence(inline, session.evidence);
+          }
         }
       }
       if (!session.firstUserText) {
@@ -115,6 +130,93 @@ export function parseSessionFile(file) {
   return session;
 }
 
+
+// Reads standard Claude Code spill files for one tool result. The log is
+// untrusted input, so this deliberately does not dereference persistedOutputPath
+// or any other path string from the log. It derives only the normal sibling-session
+// path (plus the shared parent-session path used by subagent transcripts), rejects
+// symlinked spill locations, and caps reads. Large spills keep head and tail because
+// test summaries commonly appear at the end.
+const SPILL_READ_LIMIT = 5 * 1024 * 1024;
+const SPILL_TAIL_KEEP = 1024 * 1024;
+
+function spillCandidates(sessionFile, toolUseId) {
+  const sessionId = path.basename(sessionFile, '.jsonl');
+  const dir = path.dirname(sessionFile);
+  const candidates = [{ root: path.join(dir, sessionId), file: path.join(dir, sessionId, 'tool-results', `${toolUseId}.txt`) }];
+  // Subagent JSONL files live at <session-id>/subagents/agent-*.jsonl, while their
+  // spilled tool output shares the parent session's tool-results directory.
+  if (path.basename(dir) === 'subagents') {
+    const parentSessionDir = path.dirname(dir);
+    candidates.push({ root: parentSessionDir, file: path.join(parentSessionDir, 'tool-results', `${toolUseId}.txt`) });
+  }
+  return candidates;
+}
+
+function hasSymlinkComponent(root, target) {
+  const rel = path.relative(root, target);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return true;
+  let current = root;
+  try {
+    for (const part of ['.', ...rel.split(path.sep).filter(Boolean)]) {
+      if (part !== '.') current = path.join(current, part);
+      if (fs.lstatSync(current).isSymbolicLink()) return true;
+    }
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+function readFdCapped(fd, size) {
+  if (size <= SPILL_READ_LIMIT) {
+    const buf = Buffer.alloc(size);
+    const n = fs.readSync(fd, buf, 0, size, 0);
+    return { text: buf.toString('utf8', 0, n), truncated: false };
+  }
+  const headSize = SPILL_READ_LIMIT - SPILL_TAIL_KEEP;
+  const head = Buffer.alloc(headSize);
+  const headRead = fs.readSync(fd, head, 0, headSize, 0);
+  const tail = Buffer.alloc(SPILL_TAIL_KEEP);
+  const tailRead = fs.readSync(fd, tail, 0, SPILL_TAIL_KEEP, Math.max(0, size - SPILL_TAIL_KEEP));
+  return {
+    text: `${head.toString('utf8', 0, headRead)}\n...[tool output truncated: middle omitted]...\n${tail.toString('utf8', 0, tailRead)}`,
+    truncated: true,
+  };
+}
+
+function readSpillCandidate(root, spill) {
+  try {
+    if (hasSymlinkComponent(root, spill)) return null;
+    const st = fs.lstatSync(spill);
+    if (!st.isFile()) return null;
+    const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+    const fd = fs.openSync(spill, flags);
+    try {
+      return readFdCapped(fd, st.size);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function readSpilledToolResult(sessionFile, toolUseId) {
+  if (typeof toolUseId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(toolUseId)) return null;
+  for (const candidate of spillCandidates(sessionFile, toolUseId)) {
+    const result = readSpillCandidate(candidate.root, candidate.file);
+    if (result) return result;
+  }
+  return null;
+}
+
+function expectsSpilledToolResult(inlineText, toolUseResult) {
+  if (/<persisted-output>[\s\S]*Full output saved to:/i.test(inlineText)) return true;
+  return !!(toolUseResult && typeof toolUseResult === 'object' && !Array.isArray(toolUseResult) &&
+    typeof toolUseResult.persistedOutputPath === 'string');
+}
+
 export function parseDir(dir) {
   const out = [];
   for (const f of iterJsonlFiles(dir)) {
@@ -131,11 +233,21 @@ const FAIL_LINE = /([1-9]\d*)\s+(?:tests?\s+)?(?:failing|failed)\b/i;
 const EXIT_ZERO = /(?:exit code|exit status)[:=]?\s*0\b/i;
 const EXIT_NONZERO = /(?:exit code|exit status)[:=]?\s*([1-9]\d*)\b/;
 
+function lastMatch(re, text) {
+  const flags = re.flags.includes('g') ? re.flags : re.flags + 'g';
+  const global = new RegExp(re.source, flags);
+  let m, last = null;
+  while ((m = global.exec(text))) last = m;
+  return last;
+}
+
 function collectEvidence(text, out) {
   if (!text) return;
   let m;
-  if ((m = text.match(FAIL_LINE))) out.push({ kind: 'test-failure', detail: `${m[1]} failing (log-reported)` });
-  if ((m = text.match(EXIT_NONZERO))) out.push({ kind: 'exit-nonzero', detail: `exit code ${m[1]} (log-reported)` });
-  if ((m = text.match(TEST_LINE))) out.push({ kind: 'test-pass', detail: `${m[1]} passing (log-reported)` });
+  // Full spill text can contain several suite summaries. Keep the last observed
+  // count rather than the first, while failure evidence still wins downstream.
+  if ((m = lastMatch(FAIL_LINE, text))) out.push({ kind: 'test-failure', detail: `${m[1]} failing (log-reported)` });
+  if ((m = lastMatch(EXIT_NONZERO, text))) out.push({ kind: 'exit-nonzero', detail: `exit code ${m[1]} (log-reported)` });
+  if ((m = lastMatch(TEST_LINE, text))) out.push({ kind: 'test-pass', detail: `${m[1]} passing (log-reported)` });
   else if (EXIT_ZERO.test(text)) out.push({ kind: 'command-exited-0', detail: 'a command exited 0 (log-reported; says nothing about task success)' });
 }
