@@ -8,6 +8,8 @@ Node 18+ with no dependencies. Run the tests with:
 
     npm test
 
+On Windows, the symlink regression tests need permission to create symlinks (for example Developer Mode or an elevated shell). Use an environment with symlink support when running the full suite.
+
 ## Ground rules
 
 - Fixtures must be synthetic or from a source whose license allows it, with a line in `test/fixtures/PROVENANCE.md`. Never commit real session logs.
