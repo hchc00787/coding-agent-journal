@@ -173,6 +173,118 @@ test('JSON null / array / primitive lines and odd field types do not crash', () 
   assert.doesNotThrow(() => { buildJournal(sessions, {}); renderHtml(buildJournal(sessions, {})); });
 });
 
+
+test('standard spilled tool-result sidecar supplies outcome evidence without following log paths', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-spill-'));
+  const sessionId = 'spill-session';
+  const spillDir = path.join(dir, sessionId, 'tool-results');
+  fs.mkdirSync(spillDir, { recursive: true });
+  fs.writeFileSync(path.join(spillDir, 'toolu_big.txt'), 'build output\n24 tests passing\n');
+  const outside = path.join(dir, 'outside.txt');
+  fs.writeFileSync(outside, '999 tests passing\n');
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), [
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: 'run tests' } }),
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:01Z', type: 'assistant', message: { role: 'assistant', id: 'm1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, content: [{ type: 'tool_use', id: 'toolu_big', name: 'Bash', input: { command: 'npm test' } }] } }),
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:02Z', type: 'user', toolUseResult: { persistedOutputPath: outside }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_big', content: '<persisted-output>Output too large. Full output saved to an untrusted log path. Preview: build output</persisted-output>' }] } }),
+  ].join('\n') + '\n');
+  const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
+  assert.ok(s.evidence.some(e => e.kind === 'test-pass' && e.detail.includes('24 passing')));
+  assert.ok(!s.evidence.some(e => e.detail.includes('999 passing')), 'arbitrary persistedOutputPath must not be followed');
+  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 0 });
+  const [e] = buildJournal([s], {}).days[0].entries;
+  assert.equal(e.outcome.status, 'log-reported-pass');
+  assert.match(renderMarkdown(buildJournal([s], {})), /Tool output spills: 1 read/);
+});
+
+test('missing spill is labeled and falls back to inline preview', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-spill-missing-'));
+  const sessionId = 'missing-spill';
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), [
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_missing', content: '<persisted-output>Output too large. Full output saved to: /ignored/tool-results/toolu_missing.txt\n\nPreview: 7 tests passing</persisted-output>' }] } }),
+  ].join('\n') + '\n');
+  const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
+  assert.deepEqual(s.spill, { read: 0, missing: 1, truncated: 0 });
+  assert.ok(s.evidence.some(e => e.detail.includes('7 passing')));
+  const md = renderMarkdown(buildJournal([s], {}));
+  assert.ok(md.includes('Tool output spills: 1 missing \\(inline preview used\\)'));
+});
+
+test('capped spill keeps head and tail, and last test summary wins', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-spill-cap-'));
+  const sessionId = 'cap-spill';
+  const spillDir = path.join(dir, sessionId, 'tool-results');
+  fs.mkdirSync(spillDir, { recursive: true });
+  const size = 5 * 1024 * 1024 + 128;
+  const buf = Buffer.alloc(size, 'x');
+  Buffer.from('5 tests passing\n').copy(buf, 0);
+  const tail = Buffer.from('24 tests passing\n');
+  tail.copy(buf, size - tail.length);
+  fs.writeFileSync(path.join(spillDir, 'toolu_big.txt'), buf);
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), [
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_big', content: '<persisted-output>Output too large. Full output saved to: ignored\n\nPreview: 5 tests passing</persisted-output>' }] } }),
+  ].join('\n') + '\n');
+  const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
+  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 1 });
+  assert.ok(s.evidence.some(e => e.detail.includes('24 passing')));
+  assert.ok(!s.evidence.some(e => e.detail.includes('5 passing')), 'first suite summary must not beat the final summary');
+  const md = renderMarkdown(buildJournal([s], {}));
+  assert.match(md, /1 read/);
+  assert.ok(md.includes('1 truncated \\(head and tail kept\\)'));
+});
+
+test('symlinked spill leaf or parent directory is refused', () => {
+  for (const mode of ['leaf', 'parent']) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `aj-spill-link-${mode}-`));
+    const sessionId = 'linked-spill';
+    const outside = path.join(dir, 'outside.txt');
+    fs.writeFileSync(outside, '999 tests passing\n');
+    const sessionDir = path.join(dir, sessionId);
+    if (mode === 'leaf') {
+      fs.mkdirSync(path.join(sessionDir, 'tool-results'), { recursive: true });
+      fs.symlinkSync(outside, path.join(sessionDir, 'tool-results', 'toolu_big.txt'));
+    } else {
+      const realDir = path.join(dir, 'real-session');
+      fs.mkdirSync(path.join(realDir, 'tool-results'), { recursive: true });
+      fs.writeFileSync(path.join(realDir, 'tool-results', 'toolu_big.txt'), '999 tests passing\n');
+      fs.symlinkSync(realDir, sessionDir, 'dir');
+    }
+    fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), [
+      JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_big', content: '<persisted-output>Output too large. Full output saved to: ignored\n\nPreview: no result</persisted-output>' }] } }),
+    ].join('\n') + '\n');
+    const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
+    assert.equal(s.spill.read, 0, mode);
+    assert.equal(s.spill.missing, 1, mode);
+    assert.ok(!s.evidence.some(e => e.detail.includes('999 passing')), mode);
+  }
+});
+
+test('subagent transcript reads the parent session shared spill directory', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-spill-subagent-'));
+  const sessionId = 'parent-session';
+  const subDir = path.join(dir, sessionId, 'subagents');
+  fs.mkdirSync(subDir, { recursive: true });
+  fs.mkdirSync(path.join(dir, sessionId, 'tool-results'), { recursive: true });
+  fs.writeFileSync(path.join(dir, sessionId, 'tool-results', 'toolu_sub.txt'), '33 tests passing\n');
+  const agentFile = path.join(subDir, 'agent-a.jsonl');
+  fs.writeFileSync(agentFile, [
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sub', content: '<persisted-output>Output too large. Full output saved to: ignored\n\nPreview: partial</persisted-output>' }] } }),
+  ].join('\n') + '\n');
+  const s = parseSessionFile(agentFile);
+  assert.deepEqual(s.spill, { read: 1, missing: 0, truncated: 0 });
+  assert.ok(s.evidence.some(e => e.detail.includes('33 passing')));
+});
+
+test('invalid tool_use_id cannot traverse outside the derived spill directory', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-spill-traversal-'));
+  const sessionId = 'traversal-spill';
+  fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), [
+    JSON.stringify({ sessionId, cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: '../outside', content: '<persisted-output>Output too large. Full output saved to: ignored\n\nPreview: no result</persisted-output>' }] } }),
+  ].join('\n') + '\n');
+  const s = parseSessionFile(path.join(dir, `${sessionId}.jsonl`));
+  assert.equal(s.spill.read, 0);
+  assert.equal(s.spill.missing, 1);
+});
+
 test('Markdown output neutralizes images, links, headings and HTML from log text', () => {
   const dir = writeSession([{ sessionId: 's', cwd: '/p', timestamp: '2026-11-01T00:00:00Z', type: 'user',
     message: { role: 'user', content: '![x](https://evil.example/t.png) [click](https://evil.example) # H `c` <b>x</b>' } }]);
