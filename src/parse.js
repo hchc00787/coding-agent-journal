@@ -4,7 +4,7 @@
 // Coverage limits: sidechain events inside a file are included; separate subagent files are separate sessions;
 // file-history-snapshot / progress / queue-operation lines are ignored.
 // Standard sibling-session tool-results/<tool_use_id>.txt spill files are read for outcome evidence.
-// Missing/truncated spills are labeled; structured .json spill files and arbitrary persistedOutputPath values are not followed.
+// Missing/truncated/unsupported spills are labeled; structured .json spill files and arbitrary persistedOutputPath values are not read.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -38,7 +38,7 @@ export function parseSessionFile(file) {
     firstUserText: null, lastAssistantText: null,
     filesModified: new Set(), filesRead: new Set(), toolCalls: 0, bashCommands: 0,
     evidence: [], // signals observed in tool output text, never agent claims
-    spill: { read: 0, missing: 0, truncated: 0 },
+    spill: { read: 0, missing: 0, truncated: 0, unsupported: 0 },
     skippedMalformed, skippedDuplicate,
   };
 
@@ -84,12 +84,13 @@ export function parseSessionFile(file) {
           // follow an arbitrary path embedded in the log. Label expected-but-missing
           // spills so preview-only coverage is visible instead of silently degraded.
           const spilled = readSpilledToolResult(file, block.tool_use_id);
-          if (spilled) {
+          if (spilled?.status === 'read') {
             session.spill.read++;
             if (spilled.truncated) session.spill.truncated++;
             collectEvidence(spilled.text, session.evidence);
           } else {
-            if (expectsSpilledToolResult(inline, e.toolUseResult)) session.spill.missing++;
+            if (spilled?.status === 'unsupported') session.spill.unsupported++;
+            else if (expectsSpilledToolResult(inline, e.toolUseResult)) session.spill.missing++;
             collectEvidence(inline, session.evidence);
           }
         }
@@ -143,14 +144,14 @@ const SPILL_TAIL_KEEP = 1024 * 1024;
 function spillCandidates(sessionFile, toolUseId) {
   const sessionId = path.basename(sessionFile, '.jsonl');
   const dir = path.dirname(sessionFile);
-  const candidates = [{ root: path.join(dir, sessionId), file: path.join(dir, sessionId, 'tool-results', `${toolUseId}.txt`) }];
+  const roots = [path.join(dir, sessionId)];
   // Subagent JSONL files live at <session-id>/subagents/agent-*.jsonl, while their
   // spilled tool output shares the parent session's tool-results directory.
-  if (path.basename(dir) === 'subagents') {
-    const parentSessionDir = path.dirname(dir);
-    candidates.push({ root: parentSessionDir, file: path.join(parentSessionDir, 'tool-results', `${toolUseId}.txt`) });
-  }
-  return candidates;
+  if (path.basename(dir) === 'subagents') roots.push(path.dirname(dir));
+  return [
+    ...roots.map(root => ({ root, kind: 'text', file: path.join(root, 'tool-results', `${toolUseId}.txt`) })),
+    ...roots.map(root => ({ root, kind: 'json', file: path.join(root, 'tool-results', `${toolUseId}.json`) })),
+  ];
 }
 
 function hasSymlinkComponent(root, target) {
@@ -168,28 +169,46 @@ function hasSymlinkComponent(root, target) {
   return false;
 }
 
+function readRegion(fd, buffer, size, position) {
+  let total = 0;
+  while (total < size) {
+    const n = fs.readSync(fd, buffer, total, size - total, position + total);
+    if (n === 0) break;
+    total += n;
+  }
+  return total;
+}
+
 function readFdCapped(fd, size) {
   if (size <= SPILL_READ_LIMIT) {
     const buf = Buffer.alloc(size);
-    const n = fs.readSync(fd, buf, 0, size, 0);
-    return { text: buf.toString('utf8', 0, n), truncated: false };
+    const n = readRegion(fd, buf, size, 0);
+    return { status: 'read', text: buf.toString('utf8', 0, n), truncated: n < size };
   }
   const headSize = SPILL_READ_LIMIT - SPILL_TAIL_KEEP;
   const head = Buffer.alloc(headSize);
-  const headRead = fs.readSync(fd, head, 0, headSize, 0);
+  const headRead = readRegion(fd, head, headSize, 0);
   const tail = Buffer.alloc(SPILL_TAIL_KEEP);
-  const tailRead = fs.readSync(fd, tail, 0, SPILL_TAIL_KEEP, Math.max(0, size - SPILL_TAIL_KEEP));
+  const tailRead = readRegion(fd, tail, SPILL_TAIL_KEEP, Math.max(0, size - SPILL_TAIL_KEEP));
   return {
+    status: 'read',
     text: `${head.toString('utf8', 0, headRead)}\n...[tool output truncated: middle omitted]...\n${tail.toString('utf8', 0, tailRead)}`,
     truncated: true,
   };
 }
 
-function readSpillCandidate(root, spill) {
+function inspectSpillCandidate(root, spill) {
   try {
     if (hasSymlinkComponent(root, spill)) return null;
     const st = fs.lstatSync(spill);
-    if (!st.isFile()) return null;
+    return st.isFile() ? st : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSpillCandidate(root, spill, st) {
+  try {
     const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
     const fd = fs.openSync(spill, flags);
     try {
@@ -205,7 +224,10 @@ function readSpillCandidate(root, spill) {
 function readSpilledToolResult(sessionFile, toolUseId) {
   if (typeof toolUseId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(toolUseId)) return null;
   for (const candidate of spillCandidates(sessionFile, toolUseId)) {
-    const result = readSpillCandidate(candidate.root, candidate.file);
+    const st = inspectSpillCandidate(candidate.root, candidate.file);
+    if (!st) continue;
+    if (candidate.kind === 'json') return { status: 'unsupported' };
+    const result = readSpillCandidate(candidate.root, candidate.file, st);
     if (result) return result;
   }
   return null;
