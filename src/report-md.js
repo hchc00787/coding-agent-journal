@@ -10,7 +10,7 @@ const OUTCOME_LABEL = {
 export const GENERATED_MARK = '<!-- generated-by: coding-agent-journal -->';
 
 export const COVERAGE_LIMITS =
-  'Coverage limits: parsed from third-party documented Claude Code JSONL format, untested against real logs. Standard text tool-result spill files are read when found, with missing or truncated spills labeled; structured JSON spills, Codex logs and file-history snapshots are not read. Sidechain events inside a file are included in the session for that file, while separate subagent files appear as separate entries. Missing usage fields are treated as unknown, not zero.';
+  'Coverage limits: parsed from third-party documented Claude Code JSONL format, untested against real logs. Standard text tool-result spill files are read when found, with missing, truncated or unsupported spills labeled; structured JSON spills, Codex logs and file-history snapshots are not read. Sidechain events inside a file are included in the session for that file, while separate subagent files appear as separate entries. Missing usage fields are treated as unknown, not zero.';
 
 export function outcomeLabel(status) { return OUTCOME_LABEL[status] || status; }
 
@@ -44,11 +44,12 @@ const EVIDENCE_CAVEAT =
 
 
 export function spillLabel(spill) {
-  if (!spill || (!spill.read && !spill.missing && !spill.truncated)) return null;
+  if (!spill || (!spill.read && !spill.missing && !spill.truncated && !spill.unsupported)) return null;
   const parts = [];
   if (spill.read) parts.push(`${spill.read} read`);
   if (spill.truncated) parts.push(`${spill.truncated} truncated (head and tail kept)`);
   if (spill.missing) parts.push(`${spill.missing} missing (inline preview used)`);
+  if (spill.unsupported) parts.push(`${spill.unsupported} not read (unsupported structured spill; inline text used)`);
   return parts.join('; ');
 }
 
