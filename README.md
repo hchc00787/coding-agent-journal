@@ -32,7 +32,13 @@ Covered with limits: standard sibling-session text spill files (`<session-id>/to
 
 ## Development
 
-    node --test test/journal.test.js
+    npm test
+
+Run the parser smoke check against externally cloned public fixture directories (no network access from the smoke script itself):
+
+    npm run smoke:fixtures -- /path/to/claude-code-log/test/test_data /path/to/ccthread/tests/fixtures
+
+The command prints counts as JSON and exits nonzero if any `.jsonl` file throws during parsing or if the supplied roots contain no `.jsonl` files. `no_session` means the parser returned no supported session, not necessarily that the file was empty; `empty_files` counts files with no non-whitespace content. Version counts cover top-level `version` fields found anywhere in each file. Symlinked files and directories are skipped and counted as `skipped_symlinks`. Error paths are relative to the supplied roots, but review output before sharing it. Public fixture smoke is crash-resistance evidence only; it is not a real-world Claude Code compatibility claim.
 
 ## Credits and license
 
