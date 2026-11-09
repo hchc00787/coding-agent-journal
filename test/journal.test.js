@@ -335,6 +335,26 @@ test('CLI refuses a foreign non-empty directory and changes nothing (files and .
   assert.ok(!fs.existsSync(path.join(out, '.agent-journal-output')));
 });
 
+test('public fixture smoke command reports parse counts without errors', () => {
+  const out = execFileSync(process.execPath, ['scripts/smoke-public-fixtures.mjs', fixtures], { encoding: 'utf8' });
+  const result = JSON.parse(out);
+  assert.equal(result.errors.length, 0);
+  assert.ok(result.files >= 2);
+  assert.ok(result.parsed >= 2);
+  assert.equal(result.no_session, result.files - result.parsed);
+  assert.ok(result.empty_files <= result.no_session);
+  assert.equal(result.skipped_symlinks, 0);
+});
+
+test('public fixture smoke fails clearly for an empty root', () => {
+  const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-smoke-empty-'));
+  const run = spawnSync(process.execPath, ['scripts/smoke-public-fixtures.mjs', emptyRoot], { encoding: 'utf8' });
+  assert.equal(run.status, 1);
+  const result = JSON.parse(run.stdout);
+  assert.equal(result.files, 0);
+  assert.ok(result.errors.some((error) => error.error === 'no .jsonl files found'));
+});
+
 test('CLI refuses when --out is a file, and works for new, empty and previously owned directories', () => {
   const input = writeSession([asst()]);
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'aj-base-'));
