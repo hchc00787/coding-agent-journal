@@ -16,10 +16,21 @@ Local-first CLI that turns AI coding-agent session logs (Claude Code JSONL trans
 - **Costs are never presented as actual spend.** Cost is shown only as an estimate at Anthropic's published API list prices (dated, source URL in the report footer), labeled `list-price est.`; it is not billed spend (subscriptions, batch, long-context, fast mode, regional pricing and 1h cache writes are not modeled). Models missing from the table show `unknown cost`; there is no fallback rate. The tool does not read actual billed cost.
 - **Heuristic redaction, not a guarantee.** Secrets and private paths are pattern-redacted and task text is bounded. This is **not comprehensive**. `--full-text` embeds longer verbatim excerpts, prints a warning, and its output must be reviewed line by line before any sharing.
 
+## Install
+
+The npm registry package is not published yet. Install the CLI from this repository:
+
+    npm install -g github:hchc00787/coding-agent-journal
+    agent-journal --input ~/.claude/projects --out ./agent-journal-out
+
 ## Usage
+
+From a source checkout:
 
     node bin/agent-journal.js --input ~/.claude/projects --out ./agent-journal-out
     node bin/agent-journal.js --input ~/.claude/projects --out ./agent-journal-out --full-text   # longer excerpts; review before sharing
+
+When installed globally, replace `node bin/agent-journal.js` with `agent-journal`.
 
 ## Log format coverage (best-effort)
 
@@ -31,6 +42,8 @@ Covered: `user` / `assistant` entries, tool_use blocks, tool_result text blocks,
 Covered with limits: standard sibling-session text spill files (`<session-id>/tool-results/<tool-use-id>.txt`, including the parent session's shared spill directory for subagent transcripts) are read for outcome evidence. Reads are capped at 5 MB and keep head plus tail; missing or truncated spill output is labeled. Structured `.json` spill files are detected and labeled unsupported but not read; arbitrary `persistedOutputPath` values from logs are not followed; symlinked spill files or spill directories are refused. Not covered: `file-history-snapshot` diffs, `progress` / `queue-operation` noise (ignored), Codex or other agent formats. Sidechain events that appear inside a file are included in that file's session; separate subagent files appear as separate entries, not merged. Bundled fixtures are synthetic. As a smoke test (not bundled, not a compatibility claim), the parser was also run on openly licensed public test fixtures from daaain/claude-code-log (MIT) and jakemarsh/ccthread (MIT): it parsed all files without error, and the run exposed two bugs (Windows-style paths, mixed-model sessions) that are fixed. Wider smoke run: 32 MIT-licensed public fixtures from daaain/claude-code-log, whose `version` fields range from 1.0.24 to 2.1.198, parsed without error. Those are fixture files written by other projects, so this smoke run shows the parser does not crash on them; it does not show compatibility with all current real-world logs, which remain untested. Sessions mixing several models show unknown cost.
 
 ## Development
+
+From a source checkout:
 
     npm test
 

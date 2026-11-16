@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Adds npm package metadata and a publish tarball allowlist so future registry evaluation starts from a minimal installable package. The package is not published yet.
 - Reads standard Claude Code text spill files (`tool-results/<tool-use-id>.txt`) for outcome evidence, labels missing, truncated or unsupported spill output, and refuses arbitrary paths or symlinked spill locations.
 - Adds a local public-fixture smoke command for reproducible parser crash-resistance checks against externally cloned MIT-licensed fixture directories.
 

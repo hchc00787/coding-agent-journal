@@ -2,17 +2,42 @@
   "name": "coding-agent-journal",
   "version": "0.1.0",
   "description": "Turn AI coding-agent session logs into a durable, local-first work journal.",
+  "keywords": [
+    "claude-code",
+    "jsonl",
+    "journal",
+    "cli",
+    "local-first"
+  ],
   "type": "module",
   "bin": {
     "agent-journal": "bin/agent-journal.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/journal.test.js",
     "smoke:fixtures": "node scripts/smoke-public-fixtures.mjs"
   },
   "license": "MIT",
   "engines": {
     "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hchc00787/coding-agent-journal.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hchc00787/coding-agent-journal/issues"
+  },
+  "homepage": "https://github.com/hchc00787/coding-agent-journal#readme",
+  "files": [
+    "bin",
+    "src",
+    "scripts/smoke-public-fixtures.mjs",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "private": false
 }
